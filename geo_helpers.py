@@ -13,7 +13,7 @@ from dask.diagnostics import ProgressBar
 from scipy.ndimage import zoom
 import os
 from rasterio.windows import from_bounds
-from sklearn.cluster import KMeans
+from sklearn.cluster import MiniBatchKMeans
 
 
 
@@ -363,23 +363,24 @@ def show_split_statistics(df, train_indices, test_indices, title="Train-Test Spl
 
 
 def compute_clusters(embeddings, k_values=[3, 5, 10], random_state=42):
-    """Compute k-means clustering on embeddings."""
-    
     n_bands, height, width = embeddings.shape
-    X_cluster = embeddings.reshape(n_bands, -1).T  # (H*W, 64)
-    
-    cluster_results = {}
-    print(f"Computing k-means clustering for {len(k_values)} values...")
-    
+    X = embeddings.reshape(n_bands, -1).T
+
+    results = {}
+
     for k in k_values:
-        print(f"  k={k}...")
-        kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
-        cluster_labels_flat = kmeans.fit_predict(X_cluster)
-        cluster_labels = cluster_labels_flat.reshape(height, width)
-        cluster_results[k] = cluster_labels
-    
-    print(" Clustering complete!")
-    return cluster_results
+        print(f"k={k}")
+        kmeans = MiniBatchKMeans(
+            n_clusters=k,
+            batch_size=4096,
+            random_state=random_state,
+            n_init=3,
+            max_iter=100
+        )
+        labels = kmeans.fit_predict(X)
+        results[k] = labels.reshape(height, width)
+
+    return results
 
 
 def predict_on_embeddings(clf, embeddings):
