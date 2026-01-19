@@ -1,8 +1,7 @@
 # Foundation Models For Earth Observation - Guest Lecture
 Lecture held at the University of Strasbourg on Foundation Models for Earth Observation as Part of the "EO for Sustainable Development Applications" course.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)]
-(https://colab.research.google.com/github/rohansaw/FoundationModels4EO/blob/main/foundation_models_for_EO.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rohansaw/FoundationModels4EO/blob/main/foundation_models_for_EO.ipynb)
 
 ## Content
 
