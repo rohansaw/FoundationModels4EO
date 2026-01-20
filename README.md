@@ -11,7 +11,8 @@ Lecture held at the University of Strasbourg on Foundation Models for Earth Obse
 4. Empty Jupter Notebook with Instructions for a voluntary exercise: Deforestation Detection with Alpha Earth Embeddings.
 
 ### Sources
-Where not specified differently, all content was created by Rohan Sawahn.
+Where not specified differently, all content was created by Rohan Sawahn. Feel free to re-use, share and modify this lecture's content.
+
 Sources used were:
 - https://www.youtube.com/watch?v=yg5l9ED05-s
 - https://medium.com/google-earth/ai-powered-pixels-introducing-googles-satellite-embedding-dataset-31744c1f4650
