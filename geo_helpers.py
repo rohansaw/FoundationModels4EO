@@ -1,5 +1,8 @@
 """
 Helper functions for geospatial data and foundation model embeddings.
+
+These utils should probably be refactored, right now I there is quite a lot of duplication
+and this code serves simply for supporting the demonstration notebooks.
 """
 
 import numpy as np
@@ -9,11 +12,15 @@ import planetary_computer as pc
 from pystac_client import Client
 import rasterio
 from rasterio.session import AWSSession
+from rasterio.transform import from_bounds as transform_from_bounds
+from rasterio.windows import from_bounds
 from dask.diagnostics import ProgressBar
 from scipy.ndimage import zoom
 import os
-from rasterio.windows import from_bounds
 from sklearn.cluster import MiniBatchKMeans
+import calendar
+import json
+
 
 
 
@@ -33,18 +40,25 @@ SOY_CODE = 5
 
 
 def load_sentinel2_rgb(lon_min, lon_max, lat_min, lat_max, year, month=None):
-    """Load Sentinel-2 RGB image for a region."""
+    """Load Sentinel-2 RGB image for a region.
+    
+    Args:
+        lon_min, lon_max, lat_min, lat_max: Bounding box coordinates in WGS84
+        year: Year to load imagery from
+        month: Optional month to load imagery from
+        target_shape: Optional (height, width) tuple to ensure consistent output size.
+                     If None, uses native resolution of clipped data.
+    
+    Returns:
+        RGB numpy array of shape (height, width, 3)
+    """
     if month is not None:
         print(f"Loading Sentinel-2 RGB imagery for {year}-{month:02d}...")
         start_date = f"{year}-{month:02d}-01"
-        if month == 12:
-            end_date = f"{year}-{month:02d}-31"
-        else:
-            end_date = f"{year}-{month:02d}-28"
-    else:
-        print(f"Loading Sentinel-2 RGB imagery for {year} growing season...")
-        start_date = f"{year}-06-01"
-        end_date = f"{year}-09-30"
+        
+        # Get the last day of the month using calendar module
+        last_day = calendar.monthrange(year, month)[1]
+        end_date = f"{year}-{month:02d}-{last_day:02d}"
     
     catalog = Client.open(STAC_API)
     search = catalog.search(
@@ -65,6 +79,8 @@ def load_sentinel2_rgb(lon_min, lon_max, lat_min, lat_max, year, month=None):
     rgb_url = item.assets["visual"].href
     rgb_da = rioxarray.open_rasterio(rgb_url)
     rgb_da = rgb_da.rio.write_crs(rgb_da.rio.crs)
+    
+    # Clip to the exact bounding box
     rgb_clipped = rgb_da.rio.clip_box(
         minx=lon_min, miny=lat_min, maxx=lon_max, maxy=lat_max, crs="EPSG:4326"
     )
@@ -77,19 +93,101 @@ def load_sentinel2_rgb(lon_min, lon_max, lat_min, lat_max, year, month=None):
     return rgb
 
 
-def load_sentinel2_rgb_timeseries(lon_min, lon_max, lat_min, lat_max, year, months):
-    """Load Sentinel-2 RGB images for multiple months."""
-    print(f"\nLoading Sentinel-2 time series for {len(months)} months...")
-    rgb_timeseries = {}
+def load_sentinel2_rgb_timeseries(lon_min, lon_max, lat_min, lat_max, year, months, target_shape=None):
+    """Load Sentinel-2 RGB images for multiple months with consistent spatial grid.
     
+    Args:
+        lon_min, lon_max, lat_min, lat_max: Bounding box coordinates in WGS84
+        year: Year to load imagery from
+        months: List of months to load imagery from
+        target_shape: Optional (height, width) tuple to ensure all images have consistent size.
+                     If None, will calculate based on bounding box and 10m resolution.
+    
+    Returns:
+        Dictionary mapping month -> RGB array (all with same shape and spatial alignment)
+    """
+    print(f"\nLoading Sentinel-2 time series for {len(months)} months...")
+    rgb_timeseries_raw = {}
+
+    # First pass: load all images as xarray DataArrays
     for month in months:
         try:
-            rgb = load_sentinel2_rgb(lon_min, lon_max, lat_min, lat_max, year, month)
-            rgb_timeseries[month] = rgb
+            rgb_da = _load_sentinel2_rgb_dataarray(lon_min, lon_max, lat_min, lat_max, year, month)
+            if rgb_da is not None:
+                rgb_timeseries_raw[month] = rgb_da
         except Exception as e:
             print(f"  Warning: Could not load imagery for month {month}: {e}")
     
+    if not rgb_timeseries_raw:
+        return {}
+    
+    # Determine target shape based on bounding box and 10m resolution
+    if target_shape is None:
+        # Use first image's transform to calculate expected shape
+        first_da = list(rgb_timeseries_raw.values())[0]
+        target_shape = (first_da.shape[1], first_da.shape[2])  # (height, width)
+        print(f"\n Using reference shape: {target_shape}")
+    
+    # Use first image as reference grid
+    reference_da = list(rgb_timeseries_raw.values())[0]
+    
+    # Reproject all images to match the reference grid
+    rgb_timeseries = {}
+    print(f" Aligning all images to consistent grid...")
+    
+    for month, rgb_da in rgb_timeseries_raw.items():
+        if rgb_da.shape == reference_da.shape and np.allclose(rgb_da.rio.transform(), reference_da.rio.transform()):
+            # Already aligned
+            rgb = np.transpose(rgb_da.values, (1, 2, 0))
+        else:
+            # Reproject to match reference
+            rgb_da_aligned = rgb_da.rio.reproject_match(reference_da)
+            rgb = np.transpose(rgb_da_aligned.values, (1, 2, 0))
+            print(f"   Month {month}: {rgb_da.shape[1:]} -> {rgb.shape[:2]}")
+        
+        rgb_timeseries[month] = rgb
+    
+    print(f" All images aligned to shape {target_shape}")
     return rgb_timeseries
+
+
+def _load_sentinel2_rgb_dataarray(lon_min, lon_max, lat_min, lat_max, year, month):
+    """Load Sentinel-2 RGB image as xarray DataArray (internal helper)."""
+    print(f"Loading Sentinel-2 RGB imagery for {year}-{month:02d}...")
+    start_date = f"{year}-{month:02d}-01"
+    
+    # Get the last day of the month using calendar module
+    last_day = calendar.monthrange(year, month)[1]
+    end_date = f"{year}-{month:02d}-{last_day:02d}"
+    
+    catalog = Client.open(STAC_API)
+    search = catalog.search(
+        collections=["sentinel-2-l2a"],
+        bbox=[lon_min, lat_min, lon_max, lat_max],
+        datetime=f"{start_date}/{end_date}",
+        query={"eo:cloud_cover": {"lt": 20}},
+        max_items=5,
+    )
+    items = list(search.get_items())
+    
+    if not items:
+        raise RuntimeError(f"No imagery found for the specified date range")
+    
+    items_sorted = sorted(items, key=lambda x: x.properties.get("eo:cloud_cover", 100))
+    item = pc.sign(items_sorted[0])
+    
+    rgb_url = item.assets["visual"].href
+    rgb_da = rioxarray.open_rasterio(rgb_url)
+    rgb_da = rgb_da.rio.write_crs(rgb_da.rio.crs)
+    
+    # Clip to the exact bounding box
+    rgb_clipped = rgb_da.rio.clip_box(
+        minx=lon_min, miny=lat_min, maxx=lon_max, maxy=lat_max, crs="EPSG:4326"
+    )
+    
+    date_str = item.properties.get('datetime', '')[:10]
+    print(f" Loaded Sentinel-2 RGB: {rgb_clipped.shape} from {date_str}")
+    return rgb_clipped
 
 
 def load_crop_labels(lon_min, lon_max, lat_min, lat_max, year):
@@ -127,7 +225,7 @@ def load_crop_labels(lon_min, lon_max, lat_min, lat_max, year):
     return cdl_data
 
 def load_foundation_model_embeddings(lon_min, lon_max, lat_min, lat_max, year):
-    """Load AEF embeddings."""
+    """Load AEF embeddings with fallback to alternative tiles if primary fails."""
     print(f"Loading foundation model embeddings for {year}...")
     
     filters = [
@@ -138,40 +236,84 @@ def load_foundation_model_embeddings(lon_min, lon_max, lat_min, lat_max, year):
         ('wgs84_north', '>=', lat_min)
     ]
     
-    df = pd.read_parquet(AEF_INDEX_URL, engine='pyarrow', filters=filters, columns=['path'])
+    # Load all necessary columns to calculate overlap
+    df = pd.read_parquet(AEF_INDEX_URL, engine='pyarrow', filters=filters, 
+                         columns=['path', 'wgs84_west', 'wgs84_east', 'wgs84_south', 'wgs84_north'])
     
     if df.empty:
         raise RuntimeError(f"No embeddings found for year {year} at the specified coordinates")
     
-    tile_url = str(df.iloc[0]['path'])
-    
-    # Use rioxarray with optimized settings
-    with rasterio.Env(
-        session=AWSSession(requester_pays=False),
-        GDAL_DISABLE_READDIR_ON_OPEN='EMPTY_DIR',
-        GDAL_NUM_THREADS='ALL_CPUS'
-    ):
-        aef_da = rioxarray.open_rasterio(
-            tile_url, 
-            masked=True, 
-            lock=False,
-        )
+    # Calculate overlap area for all tiles and sort by overlap
+    def calculate_overlap_area(row):
+        # Calculate intersection bounds
+        overlap_west = max(lon_min, row['wgs84_west'])
+        overlap_east = min(lon_max, row['wgs84_east'])
+        overlap_south = max(lat_min, row['wgs84_south'])
+        overlap_north = min(lat_max, row['wgs84_north'])
         
-        # Clip to bounds (WGS84/EPSG:4326)
-        aef_clipped = aef_da.rio.clip_box(
-            minx=lon_min, miny=lat_min, maxx=lon_max, maxy=lat_max,
-            crs="EPSG:4326"
-        )
+        # Calculate overlap area
+        overlap_width = max(0, overlap_east - overlap_west)
+        overlap_height = max(0, overlap_north - overlap_south)
+        return overlap_width * overlap_height
+    
+    df['overlap_area'] = df.apply(calculate_overlap_area, axis=1)
+    
+    # Sort by overlap area (descending) to try tiles in order of best overlap
+    df_sorted = df.sort_values('overlap_area', ascending=False).reset_index(drop=True)
+    
+    if len(df_sorted) > 1:
+        print(f" Found {len(df_sorted)} tiles, will try in order of overlap area...")
+    
+    # Try loading tiles in order until one succeeds
+    last_error = None
+    for idx, row in df_sorted.iterrows():
+        tile_url = str(row['path'])
+        overlap = row['overlap_area']
         
-        # Compute with progress
-        with ProgressBar():
-            aef_clipped = aef_clipped.compute(scheduler='threads', num_workers=4)
+        try:
+            print(f" Attempting tile {idx + 1}/{len(df_sorted)} (overlap: {overlap:.6f} sq degrees)...")
+            
+            # Use rioxarray with optimized settings
+            with rasterio.Env(
+                session=AWSSession(requester_pays=False),
+                GDAL_DISABLE_READDIR_ON_OPEN='EMPTY_DIR',
+                GDAL_NUM_THREADS='ALL_CPUS'
+            ):
+                aef_da = rioxarray.open_rasterio(
+                    tile_url, 
+                    masked=True, 
+                    lock=False,
+                )
+                
+                # Clip to bounds (WGS84/EPSG:4326)
+                aef_clipped = aef_da.rio.clip_box(
+                    minx=lon_min, miny=lat_min, maxx=lon_max, maxy=lat_max,
+                    crs="EPSG:4326"
+                )
+                
+                # Compute with progress
+                with ProgressBar():
+                    aef_clipped = aef_clipped.compute(scheduler='threads', num_workers=4)
+            
+            aef_raw = aef_clipped.values
+            aef = _dequantize_aef(aef_raw)
+
+            # Flip vertically to match Sentinel-2 orientation
+            # aef shape is (64, height, width), so flip axis 1 (height)
+            aef = np.flip(aef, axis=1)
+            
+            print(f" Successfully loaded embeddings: {aef.shape} (64 dimensions)")
+            return aef
+            
+        except Exception as e:
+            last_error = e
+            print(f" Failed to load tile {idx + 1}: {type(e).__name__}: {str(e)}")
+            if idx < len(df_sorted) - 1:
+                print(f" Trying next tile...")
+            continue
     
-    aef_raw = aef_clipped.values
-    aef = _dequantize_aef(aef_raw)
-    
-    print(f"Loaded embeddings: {aef.shape} (64 dimensions)")
-    return aef
+    # If all tiles failed, raise the last error
+    raise RuntimeError(f"Failed to load embeddings from all {len(df_sorted)} available tiles. Last error: {last_error}")
 
 
 def _dequantize_aef(raw_int8):
@@ -400,7 +542,6 @@ def predict_on_embeddings(clf, embeddings):
 
 def prepare_sample_coordinates(df, train_idx, test_idx):
     """Extract coordinates from .geo column and add split indicators."""
-    import json
     
     def extract_coordinates(geo_string):
         """Extract lon and lat from geo JSON string"""

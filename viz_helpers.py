@@ -1,5 +1,8 @@
 """
 Visualization helpers for the foundation models notebook.
+
+These utils should probably be refactored, right now I there is quite a lot of duplication
+and this code serves simply for supporting the demonstration notebooks.
 """
 
 import numpy as np
@@ -57,6 +60,53 @@ def plot_rgb_timeseries(rgb_dict, region_name="Region", year=2024):
     plt.show()
 
 
+def plot_rgb_comparison(rgb_dict_baseline, rgb_dict_target, region_name, baseline_year, target_year):
+    """Display baseline and target RGB images side-by-side for comparison."""
+    month_names = {
+        1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+        7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'
+    }
+    
+    # Get the months available in both dictionaries
+    baseline_months = sorted(rgb_dict_baseline.keys())
+    target_months = sorted(rgb_dict_target.keys())
+    
+    n_baseline = len(baseline_months)
+    n_target = len(target_months)
+    
+    # Total number of columns: baseline images + target images
+    n_cols = n_baseline + n_target
+    
+    # Create figure with single row
+    fig, axes = plt.subplots(1, n_cols, figsize=(6*n_cols, 8))
+    
+    # Handle case where there's only one total image
+    if n_cols == 1:
+        axes = [axes]
+    
+    # Plot baseline images (left side)
+    for idx, month in enumerate(baseline_months):
+        rgb = rgb_dict_baseline[month]
+        axes[idx].imshow(rgb)
+        axes[idx].set_title(f'Baseline: {month_names[month]} {baseline_year}', 
+                           fontsize=13, fontweight='bold', pad=10)
+        axes[idx].axis('off')
+    
+    # Plot target images (right side)
+    for idx, month in enumerate(target_months):
+        rgb = rgb_dict_target[month]
+        plot_idx = n_baseline + idx
+        axes[plot_idx].imshow(rgb)
+        axes[plot_idx].set_title(f'Target: {month_names[month]} {target_year}', 
+                                fontsize=13, fontweight='bold', color='darkred', pad=10)
+        axes[plot_idx].axis('off')
+    
+    plt.suptitle(f'{region_name} - Comparison: {baseline_year} vs {target_year}', 
+                 fontsize=16, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_crop_labels(cdl_data, simplified_labels=None, year=2021):
     """Visualize crop labels - both detailed and simplified views."""
     if simplified_labels is None:
@@ -100,6 +150,86 @@ def plot_embeddings_rgb(embeddings_rgb, bands=[0, 15, 8]):
     plt.axis("off")
     plt.title(f"Foundation Model Embeddings\n(Dimensions {bands[0]+1}, {bands[1]+1}, {bands[2]+1} → R, G, B)", 
               fontsize=12, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_rgb_with_change_magnitude(rgb_baseline, rgb_target, change_magnitude, 
+                                    baseline_year, target_year, baseline_month, target_month):
+    """Display baseline RGB, target RGB, and change magnitude side-by-side."""
+    month_names = {
+        1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+        7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'
+    }
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # Define spatial extent based on RGB dimensions
+    # This ensures all images use the same coordinate system
+    rgb_height, rgb_width = rgb_baseline.shape[:2]
+    extent = [0, rgb_width, rgb_height, 0]  # [left, right, bottom, top]
+    
+    # Baseline RGB
+    axes[0].imshow(rgb_baseline, extent=extent)
+    axes[0].set_title(f'Baseline: {month_names[baseline_month]} {baseline_year}', 
+                      fontsize=13, fontweight='bold', pad=10)
+    axes[0].axis('off')
+    
+    # Target RGB
+    axes[1].imshow(rgb_target, extent=extent)
+    axes[1].set_title(f'Target: {month_names[target_month]} {target_year}', 
+                      fontsize=13, fontweight='bold', color='darkred', pad=10)
+    axes[1].axis('off')
+    
+    # Change magnitude - use same extent so pixels align spatially
+    im = axes[2].imshow(change_magnitude, cmap='hot', interpolation='nearest', extent=extent)
+    axes[2].set_title(f'Change Magnitude\n{baseline_year} -> {target_year}', 
+                      fontsize=13, fontweight='bold', pad=10)
+    axes[2].axis('off')
+    plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04, label='L2 Norm')
+    
+    plt.suptitle(f'Deforestation Analysis: Imagery and Change Detection', 
+                 fontsize=16, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_rgb_with_clusters(rgb_baseline, rgb_target, cluster_map, k,
+                           baseline_year, target_year, baseline_month, target_month):
+    """Display baseline RGB, target RGB, and clustering results side-by-side."""
+    month_names = {
+        1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+        7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'
+    }
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # Define spatial extent based on RGB dimensions
+    # This ensures all images use the same coordinate system
+    rgb_height, rgb_width = rgb_baseline.shape[:2]
+    extent = [0, rgb_width, rgb_height, 0]  # [left, right, bottom, top]
+    
+    # Baseline RGB
+    axes[0].imshow(rgb_baseline, extent=extent)
+    axes[0].set_title(f'Baseline: {month_names[baseline_month]} {baseline_year}', 
+                      fontsize=13, fontweight='bold', pad=10)
+    axes[0].axis('off')
+    
+    # Target RGB
+    axes[1].imshow(rgb_target, extent=extent)
+    axes[1].set_title(f'Target: {month_names[target_month]} {target_year}', 
+                      fontsize=13, fontweight='bold', color='darkred', pad=10)
+    axes[1].axis('off')
+    
+    # Clustering - use same extent so pixels align spatially
+    im = axes[2].imshow(cluster_map, cmap='tab20', interpolation='nearest', extent=extent)
+    axes[2].set_title(f'Unsupervised Clustering\n(k={k} clusters)', 
+                      fontsize=13, fontweight='bold', pad=10)
+    axes[2].axis('off')
+    plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04, label='Cluster ID')
+    
+    plt.suptitle(f'Change Detection via Clustering: {baseline_year} vs {target_year}', 
+                 fontsize=16, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.show()
 
@@ -318,7 +448,6 @@ def plot_classification_vs_clustering(embeddings, y_true, y_pred, cluster_result
 
 def plot_sample_map_by_class(df, center_lat=33.5, center_lon=-90.8, zoom=7):
     """Create interactive map showing sample distribution by crop class."""
-    import pandas as pd
     
     m_all = leafmap.Map(center=[center_lat, center_lon], zoom=zoom)
     
@@ -389,7 +518,6 @@ def plot_sample_map_by_class(df, center_lat=33.5, center_lon=-90.8, zoom=7):
 
 def plot_sample_map_by_split(df, center_lat=33.5, center_lon=-90.8, zoom=7):
     """Create interactive map showing train vs test sample distribution."""
-    import pandas as pd
     
     m_split = leafmap.Map(center=[center_lat, center_lon], zoom=zoom)
     

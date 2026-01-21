@@ -8,7 +8,8 @@ Lecture held at the University of Strasbourg on Foundation Models for Earth Obse
 1. Lecture Slides
 2. Script to extract embeddings (+ USDA Cropland Data Layer labels) from Google Earth Engine
 3. Jupyter Notebook for Hands-On Session: Exploring Google Alpha Earth Embeddings for Crop Type Mapping
-4. Empty Jupter Notebook with Instructions for a voluntary exercise: Deforestation Detection with Alpha Earth Embeddings.
+4. Jupter Notebook with Instructions for a voluntary exercise: Deforestation Detection with Alpha Earth Embeddings.
+5. Script to extract embeddings from GEE for deforestation training and testing samples.
 
 ### Sources
 Where not specified differently, all content was created by Rohan Sawahn. Feel free to re-use, share and modify this lecture's content.
